@@ -40,11 +40,7 @@ async def process_single_website(semaphore: asyncio.Semaphore, browser, url: str
             # 計算爬取耗時
             crawl_duration = time.time() - start_time
             crawl_duration_formatted = f"{int(crawl_duration // 60)}分{int(crawl_duration % 60)}秒"
-            
-            # 獲取頁面摘要和外部連結結果
-            page_summary = crawler.get_page_summary()
-            external_link_results = crawler.get_external_link_results()
-            
+        
             # 儲存頁面摘要為 JSON
             json_path = crawler.save_page_summary_to_json()
             if json_path:
@@ -58,13 +54,12 @@ async def process_single_website(semaphore: asyncio.Semaphore, browser, url: str
             if crawl_log_path:
                 print(f"📝 已儲存 {name or url} 爬蟲 log 到: {crawl_log_path}")
             
-            # 收集這個網站的統計資料
             site_stats = {
                 'site_name': name or url,
                 'site_url': url,
                 'crawl_results': crawl_results,  # 內部頁面 status 碼列表
-                'page_summary': page_summary,
-                'external_link_results': external_link_results,
+                'page_summary': crawler.get_page_summary(),      
+                'external_link_results': crawler.get_external_link_results(),  
                 'crawl_duration': crawl_duration_formatted
             }
             
@@ -73,11 +68,11 @@ async def process_single_website(semaphore: asyncio.Semaphore, browser, url: str
             
             print(f"✅ 網站 '{name or url}' 處理完成，共爬取 {len(crawl_results)} 個頁面，耗時 {crawl_duration_formatted}")
             
-            return site_stats
+            return True
             
         except Exception as e:
             print(f"❌ 處理網站 '{name or url}' 時發生錯誤: {e}")
-            return None
+            return False
         finally:
             # 關閉 crawler
             await crawler.close()
@@ -184,7 +179,7 @@ async def main():
             results = await asyncio.gather(*tasks, return_exceptions=True)
             
             # 統計結果
-            successful_sites = sum(1 for result in results if result is not None and not isinstance(result, Exception))
+            successful_sites = sum(1 for result in results if result is True)
             failed_sites = len(websites) - successful_sites
             total_duration = time.time() - start_time
             total_duration_formatted = f"{int(total_duration // 60)}分{int(total_duration % 60)}秒"
@@ -193,14 +188,6 @@ async def main():
             print(f"📊 成功處理: {successful_sites} 個網站")
             print(f"❌ 失敗: {failed_sites} 個網站") 
             print(f"⏱️ 總耗時: {total_duration_formatted}")
-            
-            # 顯示失敗的網站
-            if failed_sites > 0:
-                print(f"\n❌ 失敗的網站:")
-                for i, result in enumerate(results):
-                    if isinstance(result, Exception):
-                        url, name = websites[i]
-                        print(f"  - {name or url}: {result}")
                         
         finally:
             await browser.close()
