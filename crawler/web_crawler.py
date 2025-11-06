@@ -8,7 +8,7 @@ from urllib.parse import urljoin, urlparse, parse_qs
 from datetime import datetime
 
 import httpx
-from playwright.async_api import Browser
+from playwright.async_api import Browser, BrowserContext
 from bs4 import BeautifulSoup
 
 from analyzer.date_extraction import extract_last_updated
@@ -35,7 +35,7 @@ class WebCrawlerAgent:
         self.enable_pagination = enable_pagination  
         self.log_writer = None  # 將在 crawl_site 中初始化
         
-        # 設定請求標頭以改善連線成功率
+        # 建立 httpx client
         headers = {
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
@@ -186,9 +186,9 @@ class WebCrawlerAgent:
         """
         手動清除內部的大型字典和變數，以協助垃圾回收(GC)
         """
-        # 清除主要的大型字典
-        self.page_info_dict = {}
-        self.external_link_results = {}
+        # 就地清空字典，確保所有參考都指向空字典
+        self.page_info_dict.clear()
+        self.external_link_results.clear()
 
     def get_page_summary(self) -> dict:
         """返回爬蟲結果的摘要字典"""
@@ -580,10 +580,10 @@ class WebCrawlerAgent:
         
         return internal_links, external_link_status
 
-    async def _crawl_single_page(self, browser: Browser, url: str, parent_url: str, base_output_dir: str, 
+    async def _crawl_single_page(self, context: BrowserContext, url: str, parent_url: str, base_output_dir: str, 
                                url_to_dir_map: Dict[str, str], url_to_title_map: Dict[str, str], 
                                depth: int) -> tuple[CrawlResult, set[str], str, str]:
-        """Crawls a single page, saves it using its title, and extracts links.
+        """Crawls a single page using a BrowserContext, saves it using its title, and extracts links.
         Returns: (CrawlResult, internal_links, page_title, actual_url)
         """
         
@@ -621,7 +621,7 @@ class WebCrawlerAgent:
             self._log(f"{'  ' * depth}Skipping {file_type} (depth {depth}): {url}")
             return CrawlResult(url, 200, "[SKIPPED_FILE]", "", {}, depth, parent_url, filename, ""), set(), filename, url
    
-        page = await browser.new_page()
+        page = await context.new_page()
         internal_links = set()
         status = 0 
         page_title = ""
@@ -774,7 +774,7 @@ class WebCrawlerAgent:
                 
                 # 關閉舊頁面並創建新頁面以避免導航衝突
                 await page.close()
-                page = await browser.new_page()
+                page = await context.new_page()
                 
                 try:
                     response = await page.goto(https_url, timeout=self.timeout * 1000, wait_until="domcontentloaded")
@@ -823,6 +823,7 @@ class WebCrawlerAgent:
                     return CrawlResult(url, status, html, last_updated, external_link_status, depth, parent_url, page_title, saved_filepath), internal_links, page_title, actual_url
                     
                 except Exception as https_e:
+                    await page.close()
                     self._log(f"{'  ' * (depth+1)}! HTTPS also failed: {type(https_e).__name__}: {https_e}")
             
             # 為失敗的頁面記錄來源頁面資訊
@@ -870,10 +871,13 @@ class WebCrawlerAgent:
         visited = set()
         all_results = []
 
+        # 建立乾淨的 BrowserContext 用於整個網站的爬取
+        context = await browser.new_context()
+
         # 首先爬取並保存主頁，同時檢查是否有 sitemap 連結
         self._log(f"Processing homepage and checking for sitemap: {url}")
         homepage_result, homepage_links, homepage_title, homepage_actual_url = await self._crawl_single_page(
-            browser, url, "", base_output_dir, url_to_dir_map, url_to_title_map, 0
+            context, url, "", base_output_dir, url_to_dir_map, url_to_title_map, 0
         )
         
         # 將主頁加入已訪問和狀態結果
@@ -897,7 +901,7 @@ class WebCrawlerAgent:
             
             # 首先將sitemap頁面本身作為depth 0的頁面爬取並保存
             sitemap_result, sitemap_page_links, sitemap_title, sitemap_actual_url = await self._crawl_single_page(
-                browser, sitemap_url, "", base_output_dir, url_to_dir_map, url_to_title_map, 0
+                context, sitemap_url, "", base_output_dir, url_to_dir_map, url_to_title_map, 0
             )
             
             visited.add(sitemap_url)
@@ -955,7 +959,7 @@ class WebCrawlerAgent:
             visited.add(current_url)
             
             result, new_links, page_title, actual_url = await self._crawl_single_page(
-                browser, current_url, parent_url, base_output_dir, 
+                context, current_url, parent_url, base_output_dir, 
                 url_to_dir_map, url_to_title_map, current_depth
             )
             
@@ -1004,7 +1008,9 @@ class WebCrawlerAgent:
                 for link in new_links:
                     if link not in visited:
                         queue.append((link, current_url, current_depth + 1))
-                        
+        
+        await context.close()
+
         # 清理局部變數以協助垃圾回收
         url_to_dir_map.clear()
         url_to_title_map.clear() 

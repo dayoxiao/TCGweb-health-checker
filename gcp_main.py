@@ -74,15 +74,24 @@ async def process_single_website(semaphore: asyncio.Semaphore, browser, url: str
         except Exception as e:
             print(f"❌ 處理網站 '{name or url}' 時發生錯誤: {e}")
             return False
+        
         finally:
             # 關閉 crawler httpx client
             await crawler.close()
             # 立即手動清除 crawler 內部的大型字典
             crawler.clear_memory()
+            
+            # 檢查 site_stats 變數是否存在並手動刪除它
+            # 釋放對字典的最後一個參考
+            if 'site_stats' in locals():
+                del site_stats
+            
+            # 完全刪除 crawler 對象
+            del crawler
+            
             # 強制 Python 執行垃圾回收
             gc.collect()
-
-
+            
 async def auto_shutdown_vm():
     """
     自動關閉 GCE VM 執行個體
