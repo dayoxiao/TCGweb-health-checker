@@ -12,6 +12,11 @@ LOG_FILE="/home/$PROJECT_USER/vm_startup.log"
 echo "========================================" > $LOG_FILE
 echo "VM 啟動時間: $(date)" >> $LOG_FILE
 
+# 先安裝 git (用於 clone 程式碼)
+echo "安裝 git..." >> $LOG_FILE
+apt-get update -y >> $LOG_FILE 2>&1
+apt-get install -y git >> $LOG_FILE 2>&1
+
 # 取得腳本所在目錄
 SCRIPT_DIR="/home/$PROJECT_USER/TCGweb-health-checker"
 
